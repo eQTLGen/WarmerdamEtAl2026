@@ -309,16 +309,16 @@ main <- function(argv = NULL) {
   }
 
   source("code/NetworkAnalysis/network_analyses_coloc.R")
-  location <- "/Users/c.a.warmerdam/Documents/projects/2025/eQTLGen"
+  variables <- deframe(read_delim(Sys.getenv("EQTLGEN_RESOURCES"), delim = "\t"))
 
-  prefix <- file.path(location, "freeze3/Interpretation/network_analyses/coloc_run_20251128_AllEqtls_UnLd05")
+  prefix <- variables["network_analyses_prefix"]
 
-  hgnc <- fread(file.path(location, "freeze3/Interpretation/network_analyses/hgnc_complete_set.txt")) %>% select(ensembl_gene_id, symbol)
+  hgnc <- fread(variables["hgnc_complete_set"]) %>% select(ensembl_gene_id, symbol)
   hgnc_name_map <- deframe(hgnc)
 
-  variant_annotations <- read_parquet(file.path(location, "processed_data/variants/variant_annotations.parquet"))
+  variant_annotations <- read_parquet(variables["variant_annotations"])
 
-  cyto <- fread(file.path(location, "freeze3/Interpretation/network_analyses/cytoBand.txt.gz"), col.names = c("chr", "start", "end", "band", "v5"))
+  cyto <- fread(variables["cytoband_reference"], col.names = c("chr", "start", "end", "band", "v5"))
 
   cyto_gr <- GRanges(seqnames = cyto$chr,
                      ranges = IRanges(start = cyto$start + 1, end = cyto$end),

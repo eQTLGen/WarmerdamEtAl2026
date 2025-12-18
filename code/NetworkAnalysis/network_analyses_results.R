@@ -24,7 +24,7 @@ main <- function(argv = NULL) {
   gwas_selection <- readxl::read_xlsx(variables["eqtlgen_gwass"]) %>%
     select(trait_identifier, trait_name)
   # Fill in!
-  output_prefix <- "/Users/c.a.warmerdam/Documents/projects/2025/eQTLGen/freeze3/Interpretation/network_analyses/coloc_run_20251128_AllEqtls_UnLd05"
+  output_prefix <- variables["network_analyses_prefix"]
 
   # Process input
   gene_prioritizations_all <- fread(sprintf("%s_prioritization_perm_results.rds", output_prefix)) %>%
