@@ -91,15 +91,14 @@ main <- function(argv=NULL) {
   #out <- geocode(place_data$Place)
   variables <- deframe(read_delim(Sys.getenv("EQTLGEN_RESOURCES"), delim = "\t"))
 
-  master_table <- fread("/Users/cawarmerdam/Documents/projects/eQTLGen/freeze3/eqtl_mapping/input/mastertable_empirical_2024-08-29_extended.txt") %>% select(c("cohort_new_name", "N" = "dataset_n"))
-  cohort_info <- fread("~/Downloads/cohort_info.txt")
-  genetic_axes <- fread("/Users/cawarmerdam/Documents/projects/eQTLGen/freeze2/PreMetaQc/output/GeneticAxes_2024-05-21.txt.gz")
-  lat_lon <- read_xlsx("/Users/cawarmerdam/Documents/projects/eQTLGen/freeze3/eqtl_mapping/input/mastertable_with_lat_long.xlsx", sheet="mastertable_empirical_2024-05-1")
+  master_table <- fread(variables["master_table"]) %>% select(c("cohort_new_name", "N" = "dataset_n"))
+  cohort_info <- fread("cohort_info.txt")
+  genetic_axes <- fread("GeneticAxes_2024-05-21.txt.gz")
+  lat_lon <- read_xlsx("mastertable_with_lat_long.xlsx", sheet="mastertable_empirical_2024-05-1")
 
   data_qc_metrics <- fread("cohort_qc_info.tsv")
 
   combined <- inner_join(cohort_info, master_table, by=c("cohort"="cohort_new_name")) %>%
-    left_join(data_qc_metrics, by =c("cohort"="Cohort")) %>%
     inner_join(lat_lon, by=c("cohort"="cohort_new_name")) %>%
     inner_join(genetic_axes, by=c("cohort"="Cohort"))
 
