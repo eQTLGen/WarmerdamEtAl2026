@@ -78,20 +78,17 @@ main <- function(argv = NULL) {
     argv <- commandArgs(trailingOnly = T)
   }
   # Define variables
-  resources <- "/scratch/hb-functionalgenomics/projects/eqtlgen-phase2/users/umcg-rwarmerdam/resources.txt"
-  variables <- deframe(read_delim(resources, delim="\t"))
-  location <- str_split(variables["available_genes"], "freeze3")[[1]][1]
+  variables <- deframe(read_delim(Sys.getenv("EQTLGEN_RESOURCES"), delim = "\t"))
 
   # Load the main file of independent variants
   eqtl_table_raw <- fread(variables["independent_variant_set"])
-
 
   eqtl_table <- eqtl_table_raw %>%
     mutate(typeCisTrans = if_else(type == "intermediate", "trans", type)) %>%
     select(phenotype, chromosome, variant, variant_index, bp, max_lbf, pip, beta, standard_error, typeCisTrans, type) %>%
     mutate(z_score_abs = abs(beta / standard_error))
 
-  precalculated_ld_path <- "../ld_matrices_20250509.rds"
+  precalculated_ld_path <- "" # Here goes the path to the folder with LD
   if (file.exists(precalculated_ld_path)) {
     ld_matrices <- readRDS(precalculated_ld_path)
   }
