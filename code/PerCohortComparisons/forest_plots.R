@@ -28,18 +28,18 @@ pop_colors <- c("African (Tanzania)" = "red",
 
 # Gene combinations
 gene_gene_combinations <- c("EEPD1" = "SREBF1",
-                           "EEPD1" = "ABCA1",
-                           "EEPD1" = "SQLE",
-                           "SLC39A10" = "SLC30A1",
-                           "SLC39A10" = "MT1X",
-                           "SLC39A10" = "MT2A",
-                           "SLC39A10" = "MT1F",
-                           "STAT2" = "OAS2",
-                           "STAT2" = "OAS3",
-                           "STAT2" = "IFI27",
-                           "STAT2" = "IFI44",
-                           "STAT2" = "SIGLEC1",
-                           "STAT2" = "USP18"
+                            "EEPD1" = "ABCA1",
+                            "EEPD1" = "SQLE",
+                            "SLC39A10" = "SLC30A1",
+                            "SLC39A10" = "MT1X",
+                            "SLC39A10" = "MT2A",
+                            "SLC39A10" = "MT1F",
+                            "STAT2" = "OAS2",
+                            "STAT2" = "OAS3",
+                            "STAT2" = "IFI27",
+                            "STAT2" = "IFI44",
+                            "STAT2" = "SIGLEC1",
+                            "STAT2" = "USP18"
 )
 
 
@@ -172,12 +172,13 @@ extract_gene_eqtls <- function(per_cohort_data, meta_data, gene, variant_referen
   meta_and_per_cohort_bound <- bind_rows(cohort_data, meta_data) %>% inner_join(variant_reference)
 }
 
-get_abca1_network <- function(prefix) {
+get_abca1_network <- function() {
 
   focal_gene <- "ABCA1"
   focal_gwas_id <- "Low_Density_Lipoprotein_Cholesterol_levels"
   focal_gene_id <- hgnc_genes[symbol == focal_gene, ]$ensembl_gene_id
 
+  prefix <- "/scratch/hb-functionalgenomics/projects/eqtlgen-phase2/freeze3/Interpretation/network_analyses/revision/coloc_run_20260602_AllEqtls_UnLd05_AllGwas"
   g <- readRDS(paste0(prefix, "_graph.rds"))
 
   association_nodes_df <- tibble(igraph::as_data_frame(g, what = "vertices")[V(g)$nodeType == "association", ]) %>%
@@ -199,18 +200,21 @@ get_abca1_network <- function(prefix) {
 # Main
 
 #' Execute main
-#' 
+#'
 #' @param argv A vector of arguments normally supplied via command-line.
 main <- function(argv = NULL) {
   if (is.null(argv)) {
     argv <- commandArgs(trailingOnly = T)
   }
-  variables <- deframe(read_delim(Sys.getenv("EQTLGEN_RESOURCES"), delim = "\t"))
+  resources <- "resources/roberts_mbp.tsv"
+  resources <- "/scratch/hb-functionalgenomics/projects/eqtlgen-phase2/users/umcg-rwarmerdam/resources.txt"
+  variables <- deframe(read_delim(resources, delim="\t"))
+  location <- str_split(variables["available_genes"], "freeze3")[[1]][1]
 
-  hgnc_genes <- fread("") # Here goes a file with HGNC gene mappings
+  hgnc_genes <- fread("/scratch/hb-functionalgenomics/projects/eqtlgen-phase2/freeze3/Interpretation/network_analyses/hgnc_complete_set.txt")
   hgnc_map <- deframe(hgnc_genes %>% select(ensembl_gene_id, symbol))
 
-  cohort_info <- fread("") # Here goes a file with cohort information
+  cohort_info <- fread("/scratch/hb-functionalgenomics/projects/eqtlgen-phase2/cohort_data/cohort_info.txt")
   master_table <- fread(variables["master_table"]) %>% select(cohort, cohort_new_name, dataset_n, dataset_platform, dataset_ancestry) %>%
     inner_join(cohort_info, by = c("cohort_new_name" = "cohort"))
 
@@ -231,7 +235,7 @@ main <- function(argv = NULL) {
     summarise(genes = list(unique(c(CisGene, TransGene)))) %>%
     inner_join(variant_reference, by = c("CisSNPs" = "variant"))
 
-  abca1_network <- get_abca1_network("") # Here goes a prefix pointing to the gene network
+  abca1_network <- get_abca1_network()
 
   abca1_genes <- na.omit(unique(abca1_network$intermediate_node, abca1_network$target))
 
@@ -250,15 +254,17 @@ main <- function(argv = NULL) {
   # Process input
   variant_reference <- read_parquet(variables["variant_reference"])
 
-  per_cohort_data <- open_dataset("") # This should be the path to the per cohort data parquet files
-  meta_analysed_data <- open_dataset("") # This should be the path to the meta-analysed parquet files
+  independent_variant_set_annot_filtered <- fread(variables["independent_variant_set"])
+
+  per_cohort_data <- open_dataset("/scratch/hb-functionalgenomics/projects/eqtlgen-phase2/freeze3/eqtl_mapping/output/all_empirical_per_cohort_4GenPC20ExpPC_2025-06-12/eqtls/cohort")
+  meta_analysed_data <- open_dataset("/scratch/hb-functionalgenomics/projects/eqtlgen-phase2/freeze3/eqtl_mapping/output/all_empirical_per_cohort_4GenPC20ExpPC_2025-06-12/eqtls/meta")
 
   example_gene_forest_plots <- generate_forest_plots(
     per_cohort_data, meta_analysed_data, hgnc_map,
     variant_reference, master_table,
     example_variant_gene_combinations)
 
-  pdf("example_gene_forest_plots.pdf", onefile = TRUE, width=180/10/2.54, height = 180/10/2.54)
+  pdf("example_gene_forest_plots_20260722.pdf", onefile = TRUE, width=180/10/2.54, height = 180/10/2.54)
   for (i in seq(length(example_gene_forest_plots))) {
     print(example_gene_forest_plots[[i]])
   }
@@ -269,7 +275,7 @@ main <- function(argv = NULL) {
     variant_reference, master_table,
     abca1_variant_gene_combinations)
 
-  pdf("abca1_network_forest_plots.pdf", onefile = TRUE, width=180/10/2.54, height = 180/10/2.54)
+  pdf("abca1_network_forest_plots_20260722.pdf", onefile = TRUE, width=180/10/2.54, height = 180/10/2.54)
   for (i in seq(length(abca1_network_forest_plots))) {
     print(abca1_network_forest_plots[[i]])
   }

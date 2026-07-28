@@ -35,7 +35,103 @@ theme_update(
   title = element_text(colour = "#595A5C", face = "plain")
 )
 
-eqtl_overview_plot <- function(data) {
+#' Function for Rb analysis
+#'
+#' @param b1 Beta from first dataset.
+#' @param se1 Standard error of beta from first dataset.
+#' @param b2 Beta from second dataset.
+#' @param se2 Standard error of beta from second dataset.
+#' @param theta Variable representing sample overlap between two datasets. Should be set 0 if no sample overlap.
+#'
+#' @return Data frame with Rb, SE(Rb) and corresponding P-value.
+#' @export
+#'
+#' @note This function is slightly adapted from the script shared by Ting Qi.
+#'
+#' @examples
+calcu_cor_true <- function(b1, se1, b2, se2, theta) {
+  idx <- which(is.infinite(b1) | is.infinite(b2) | is.infinite(se1) | is.infinite(se2))
+  if (length(idx) > 0) {
+    b1 <- b1[-idx]
+    se1 <- se1[-idx]
+    b2 <- b2[-idx]
+    se2 <- se2[-idx]
+    theta <- theta[-idx]
+  }
+
+  var_b1 <- var(b1, na.rm = T) - mean(se1^2, na.rm = T)
+  var_b2 <- var(b2, na.rm = T) - mean(se2^2, na.rm = T)
+  if (var_b1 < 0) {
+    var_b1 <- var(b1, na.rm = T)
+  }
+  if (var_b2 < 0) {
+    var_b2 <- var(b2, na.rm = T)
+  }
+  cov_b1_b2 <- cov(b1, b2, use = "complete.obs") - mean(theta, na.rm = T) * sqrt(mean(se1^2, na.rm = T) * mean(se2^2, na.rm = T))
+  r <- cov_b1_b2 / sqrt(var_b1 * var_b2)
+
+  r_jack <- c()
+  n <- length(b1)
+  for (k in 1:n) {
+    b1_jack <- b1[-k]
+    se1_jack <- se1[-k]
+    var_b1_jack <- var(b1_jack, na.rm = T) - mean(se1_jack^2, na.rm = T)
+    b2_jack <- b2[-k]
+    se2_jack <- se2[-k]
+    var_b2_jack <- var(b2_jack, na.rm = T) - mean(se2_jack^2, na.rm = T)
+    if (var_b1_jack < 0) {
+      var_b1_jack <- var(b1_jack, na.rm = T)
+    }
+    if (var_b2_jack < 0) {
+      var_b2_jack <- var(b2_jack, na.rm = T)
+    }
+    theta_jack <- theta[-k]
+    cov_e1_jack_e2_jack <- mean(theta_jack, na.rm = T) * sqrt(mean(se1_jack^2, na.rm = T) * mean(se2_jack^2, na.rm = T))
+    cov_b1_b2_jack <- cov(b1_jack, b2_jack, use = "complete.obs") - cov_e1_jack_e2_jack
+    r_tmp <- cov_b1_b2_jack / sqrt(var_b1_jack * var_b2_jack)
+    r_jack <- c(r_jack, r_tmp)
+  }
+  r_mean <- mean(r_jack, na.rm = T)
+  idx <- which(is.na(r_jack))
+  if (length(idx) > 0) {
+    se_r <- sqrt((n - 1) / n * sum((r_jack[-idx] - r_mean)^2))
+  } else {
+    se_r <- sqrt((n - 1) / n * sum((r_jack - r_mean)^2))
+  }
+
+  p <- pchisq((r / se_r)**2, df = 1, lower.tail = FALSE)
+
+  res <- list("Rb" = r, "SE(Rb)" = se_r, "p(Rb)" = p)
+  return(res)
+}
+
+#Fast version no p-value
+calcu_cor_true_r_only <- function(b1, se1, b2, se2, theta) {
+  idx <- which(is.infinite(b1) | is.infinite(b2) | is.infinite(se1) | is.infinite(se2))
+  if (length(idx) > 0) {
+    b1 <- b1[-idx]
+    se1 <- se1[-idx]
+    b2 <- b2[-idx]
+    se2 <- se2[-idx]
+    theta <- theta[-idx]
+  }
+
+  var_b1 <- var(b1, na.rm = T) - mean(se1^2, na.rm = T)
+  var_b2 <- var(b2, na.rm = T) - mean(se2^2, na.rm = T)
+  if (var_b1 < 0) {
+    var_b1 <- var(b1, na.rm = T)
+  }
+  if (var_b2 < 0) {
+    var_b2 <- var(b2, na.rm = T)
+  }
+  cov_b1_b2 <- cov(b1, b2, use = "complete.obs") - mean(theta, na.rm = T) * sqrt(mean(se1^2, na.rm = T) * mean(se2^2, na.rm = T))
+  r <- cov_b1_b2 / sqrt(var_b1 * var_b2)
+
+  return(r)
+}
+
+eqtl_overview_plot <- function(
+  data, n_cs_col="n_CSs_per_gene", n_cs_ordinal_col="n_CSs_per_gene_ord_capped", any_cs_col = "any_CS") {
 
   # Define color ramp: light to base color
   base_color <- "#0072B2"
@@ -55,22 +151,22 @@ eqtl_overview_plot <- function(data) {
     data_sub <- filter(data, typeCisTrans == t)
 
     # Bar plot
-    bar_plot <- ggplot(data_sub, aes(bin, fill = n_CSs_per_gene_ord_capped)) +
+    bar_plot <- ggplot(data_sub, aes(bin, fill = get(n_cs_ordinal_col))) +
       geom_bar(position = "fill") +
       scale_fill_manual(name = "Number of eQTLs", values = c("grey90", color_func(11)), guide=NULL) +
       scale_x_discrete(name = "Gene expression in blood",
                        breaks = c("Bin1", "Bin10"),
                        labels = c("Low", "High")) +
       scale_y_continuous(name="Proportion of genes\nshowing eQTL effect")
-      theme(legend.position = "none")
+    theme(legend.position = "none")
 
     # Correlation data
     cor_data <- data_sub %>%
       group_by(bin) %>%
       nest() %>%
       summarise(
-        Cor = map(data, ~ tidy(cor.test(.x$n_CSs_per_gene, .x$loeuf_mane, method = "spearman"))),
-        MWU = map(data, ~ tidy(wilcox.test(.x$pLI_mane[.x$any_CS], .x$pLI_mane[!.x$any_CS])))
+        Cor = map(data, ~ tidy(cor.test(.x[,n_cs_col, drop=T], .x$loeuf_mane, method = "spearman"))),
+        MWU = map(data, ~ tidy(wilcox.test(.x$pLI_mane[.x[,any_cs_col, drop=T]], .x$pLI_mane[!.x[,any_cs_col, drop=T]])))
       ) %>%
       unnest(c("Cor", "MWU"), names_sep=":") %>%
       pivot_longer(cols=ends_with("p.value"), names_sep=":", names_to=c("test", "statistic")) %>%
@@ -81,16 +177,16 @@ eqtl_overview_plot <- function(data) {
       geom_text(size=4, size.unit = "pt", parse=T) + theme_minimal() +
       scale_y_discrete(breaks=c("MWU", "Spearman")) +
       theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), legend.position = "none",
-           panel.border = element_blank(), axis.text.x = element_blank(), strip.background = element_blank(),
+            panel.border = element_blank(), axis.text.x = element_blank(), strip.background = element_blank(),
             strip.text.x = element_blank(),
             axis.text.y = element_text(angle=45, size=1),
             plot.margin = unit(c(0, 0, 0, 0), "null"),
-           axis.ticks = element_blank()) + xlab(NULL) + ylab(NULL) +
+            axis.ticks = element_blank()) + xlab(NULL) + ylab(NULL) +
       coord_cartesian(clip="off") +
       facet_wrap(vars(bin), nrow = 1)
 
-      # Correlation plot
-    cor_plot <- ggplot(data_sub, aes(n_CSs_per_gene, loeuf_mane, color = n_CSs_per_gene_ord_capped)) +
+    # Correlation plot
+    cor_plot <- ggplot(data_sub, aes(get(n_cs_col), loeuf_mane, color = get(n_cs_ordinal_col))) +
       stat_summary(fun.data = mean_se, fun.args = list(mult = 1), shape = 20,
                    size=(0.25 / (ggplot2::.pt * 72.27/96)), linewidth=(0.5 / (ggplot2::.pt * 72.27/96)),
                    geom = "pointrange") +
@@ -107,7 +203,7 @@ eqtl_overview_plot <- function(data) {
             legend.position = "none")
 
     violins <- ggplot(data_sub,
-           aes(x=any_CS, y=pLI_mane, fill=any_CS)) +
+                      aes(x=get(any_cs_col), y=pLI_mane, fill=get(any_cs_col))) +
       geom_violin(linewidth=0, color="white") +
       stat_summary(fun = "median", geom = "crossbar", color = "#D55E00", linewidth=(0.5 / (ggplot2::.pt * 72.27/96))) +
       scale_fill_manual(values=c("grey90", color_func(11)[6])) +
@@ -123,7 +219,7 @@ eqtl_overview_plot <- function(data) {
             axis.ticks.x= element_blank(),
             legend.position = "none")
 
-      plot_pairs[[t]] <- list(violins, stats, cor_plot, bar_plot)
+    plot_pairs[[t]] <- list(violins, stats, cor_plot, bar_plot)
   }
 
   layout <- "
@@ -171,7 +267,7 @@ eqtl_credible_set_leouf_supplement <- function(per_gene_type_combination_cis) {
   res <- per_gene_type_combination_cis %>% ungroup() %>% mutate(n_CSs_per_gene_ord = ordered(n_CSs_per_gene))
 
   violin_dotplot <- ggplot(res,
-                        aes(x=n_CSs_per_gene, y=loeuf_mane, fill = n_CSs_per_gene_ord_capped, group = n_CSs_per_gene_ord)) +
+                           aes(x=n_CSs_per_gene, y=loeuf_mane, fill = n_CSs_per_gene_ord_capped, group = n_CSs_per_gene_ord)) +
     geom_violin(linewidth = 0) +
     geom_boxplot(width=0.1, linewidth = 0.2, median.linewidth = 1, outlier.size = 0.2, fill="white", median.color = "black") +
     labs(x = "Number of eQTL credible sets") +
@@ -287,9 +383,9 @@ plot_beta_lof_summary_split_facets <- function(data, cis_trans_color_scale) {
     scale_x_log10(name = "|Beta|", limits = c(x_min, x_max)) +
     ylab(NULL) + xlab(NULL) +
     theme(panel.grid.major = element_line())
-    geom_text(data = beta_summary,
-              aes(x = 1, y = 1, label = mwu_label),
-              parse = TRUE, size = 6 / .pt, inherit.aes = FALSE)
+  geom_text(data = beta_summary,
+            aes(x = 1, y = 1, label = mwu_label),
+            parse = TRUE, size = 6 / .pt, inherit.aes = FALSE)
 
   # Combine panels
   final_plot <- scatter_cis / scatter_trans / summary_plot +
@@ -376,10 +472,10 @@ credible_set_locations_relative_to_gene_patchwork <- function(results_long_proc,
       distance_capped, seq(0, max(abs(distance_capped)), by = max(abs(distance_capped))/20) * sign(max(distance_capped)),
       include.lowest = T)) %>%
     group_by(location_relative_to_gene, distance_capped_bins) %>%
-      mutate(distance_capped_mean = mean(distance_capped))
+    mutate(distance_capped_mean = mean(distance_capped))
 
 
-    summary_data <- binned_data %>%
+  summary_data <- binned_data %>%
     group_by(location_relative_to_gene, distance_capped_bins) %>%
     summarise(
       n = n(),
@@ -549,11 +645,11 @@ variant_class_enrichments_over_snps <- function(finemapped_variant_classes_uniqu
     arrange(str_detect(variant_class, "hgsv")) %>%
     mutate(variant_class_label = ordered(variant_class_label, levels=variant_class_label))
 
-    variant_class_enrichments <- ggplot(
+  variant_class_enrichments <- ggplot(
     variant_class_enrichment_mat,
     aes(y = variant_class_label, x = fischer_estimate, xmin = fischer_conf.low, xmax = fischer_conf.high)) +
-      geom_vline(xintercept = 1, color="grey70", size=(0.5 / (ggplot2::.pt * 72.27 / 96)), linetype="solid") +
-      geom_col(orientation = "y", fill = "#C3E9FD") +
+    geom_vline(xintercept = 1, color="grey70", size=(0.5 / (ggplot2::.pt * 72.27 / 96)), linetype="solid") +
+    geom_col(orientation = "y", fill = "#C3E9FD") +
     geom_errorbar(width = 0.2, linewidth = (0.5 / (ggplot2::.pt * 72.27 / 96))) +
     geom_text(aes(label = format_pvalues(fischer_p.value, labelled = F), x = 0), parse = T, hjust = "inward", nudge_x = 0.08, size.unit = "pt", size = 6) +
     scale_y_discrete(name = "") +
@@ -564,22 +660,24 @@ variant_class_enrichments_over_snps <- function(finemapped_variant_classes_uniqu
 
 finemapping_per_variant <- function(per_variant_path, independent_variant_set_annot_filtered, variant_annotations) {
   value <- independent_variant_set_annot_filtered %>%
-    filter(!is.na(pip)) %>%
-    select(variant_index, phenotype, cluster, gene_cluster, CS_identifier, typeCisTrans)
+    filter(!is.na(SusieRss_CS)) %>%
+    select(variant_index, phenotype, cluster, gene_cluster, CS_identifier, typeCisTrans, locus_str)
 
   finemapping_per_variant_proc <- fread(per_variant_path) %>%
     select(variant_index, phenotype, cluster, gene_cluster, SusieRss_CS, SusieRss_pip, beta, standard_error) %>%
     left_join(value, by = join_by(variant_index, phenotype, cluster, gene_cluster)) %>%
     inner_join(variant_annotations, by = join_by(variant_index)) %>%
     group_by(chromosome, cluster, gene_cluster, SusieRss_CS, phenotype) %>%
-    mutate(credible_set_retained = any(!is.na(CS_identifier)),
-           lead_variant_in_cs = !is.na(CS_identifier),
-           typeCisTrans = case_when(
-             any(typeCisTrans == "cis") ~ "cis",
-             any(typeCisTrans == "trans") ~ "trans",
-             TRUE ~ ""
-           )) %>%
-    filter(credible_set_retained)
+    mutate(
+      credible_set_retained = any(!is.na(CS_identifier)),
+      lead_variant_in_cs = !is.na(CS_identifier),
+      typeCisTrans = case_when(
+        any(typeCisTrans == "cis") ~ "cis",
+        any(typeCisTrans == "trans") ~ "trans",
+        TRUE ~ ""
+      )) %>%
+    filter(credible_set_retained) %>%
+    mutate(locus_str = c(na.omit(locus_str), 0)[1])
 
   return(finemapping_per_variant_proc)
 }
@@ -604,6 +702,9 @@ main <- function(argv = NULL) {
   outcome_variables["n_available_genes_meta_analysis"] <- length(available_genes)
 
   available_variants <- fread(variables["available_variants"], header=F)$V1
+
+  # Get sample sizes from master table
+  sample_sizes <- fread(variables["master_table"]) %>% select(cohort_new_name, dataset_n) %>% deframe()
 
   # Window sizes
   cis_window <- 1e6
@@ -664,18 +765,49 @@ main <- function(argv = NULL) {
   independent_variant_set_annot_filtered <- fread(variables["independent_variant_set"]) %>%
     mutate(typeCisTrans = if_else(type == "intermediate", "trans", type))
 
-  # Process all cis- and trans-eQTLs to put them in the supplement
+  cis_trans_coloc_proc <- fread(variables["lbf_based_cis_trans_coloc"]) %>%
+    select(cis_gene = "cis_gene", trans_gene = "trans_gene", cis_variant = "hit1", trans_variant = "hit2")
+
+  trans_pair_annotations <- cis_trans_coloc_proc %>%
+    group_by(trans_variant, trans_gene) %>%
+    summarise(cis_genes = paste(cis_gene, collapse=";"), cis_variants = paste(cis_variant, collapse=";"),
+              n_cis_genes = n_distinct(cis_gene))
+
+  cis_pair_annotations <- cis_trans_coloc_proc %>%
+    group_by(cis_variant, cis_gene) %>%
+    summarise(trans_genes = paste(trans_gene, collapse=";"), trans_variants = paste(trans_variant, collapse=";"))
+
+  vip_largest_cons_raw <- fread(variables["vip_consequences"],
+                                select=c("ID", "Consequence", "SYMBOL", "Gene", "Feature_type", "Feature", "BIOTYPE",
+                                         "EXON", "INTRON", "DISTANCE", "ncER",
+                                         "FATHMM_MKL_NC", "ReMM", "phyloP")) %>%
+    select(variant = ID, VEP_consequence = Consequence, VEP_consequence_gene_symbol = SYMBOL, VEP_consequence_gene = Gene,
+           VEP_consequence_feature_type = Feature_type, VEP_consequence_biotype = BIOTYPE, VEP_consequence_exon = EXON,
+           VEP_consequence_intron = INTRON, VEP_consequence_distance = DISTANCE,
+           VEP_ncER = ncER, VEP_FATHMM_MKL_NC = FATHMM_MKL_NC, VEP_ReMM = ReMM, VEP_phyloP = phyloP) %>%
+    semi_join(independent_variant_set_annot_filtered, by =c("variant"))
+
   all_identified_eqtls_for_supplement <- independent_variant_set_annot_filtered %>%
-    select(ensembl_gene_id=phenotype, gene_name, variant, chromosome, bp, eff_allele, non_eff_allele, beta, standard_error, p_value, pip, sample_size, type)
+    select(ensembl_gene_id=phenotype, gene_name, variant_index, variant, chromosome, bp, eff_allele, non_eff_allele, beta, standard_error, eaf, beta_eur, standard_error_eur, eaf_eur, p_value, pip, SusieRss_CS, sample_size, type, locus_str) %>%
+    left_join(variant_annotations %>% select(variant_index, variant_class), by = "variant_index") %>%
+    left_join(trans_pair_annotations, by = c("ensembl_gene_id" = "trans_gene", "variant" = "trans_variant")) %>%
+    left_join(cis_pair_annotations, by = c("ensembl_gene_id" = "cis_gene", "variant" = "cis_variant")) %>%
+    left_join(vip_largest_cons_raw, by = c("variant"))
 
   # Write supplementary file
-  fwrite(all_identified_eqtls_for_supplement, "all_identified_eQTLs_for_supplement_20251022.txt.gz", sep="\t", col.names=T, row.names=F)
+  fwrite(all_identified_eqtls_for_supplement, "all_identified_eQTLs_for_supplement_20260619.txt.gz", sep="\t", col.names=T, row.names=F)
+  openxlsx::write.xlsx(all_identified_eqtls_for_supplement, file = "all_identified_eQTLs_for_supplement_20260619.xlsx")
 
   # Get all variants incluced in finemapped loci
   finemapping_per_variant_proc <- finemapping_per_variant(
     variables["finemapping_results"], independent_variant_set_annot_filtered, variant_annotations)
 
   # Write a set of credible set variants that pass filtering
+  fwrite(
+    finemapping_per_variant_proc %>%
+      ungroup() %>%
+      select(variant_index, variant, chromosome, bp, eff_allele, non_eff_allele, locus_str, phenotype, SusieRss_CS, SusieRss_pip, beta, standard_error, typeCisTrans, lead_variant_in_cs, credible_set_retained)
+    , "eQTLs_allCredibleSetVariants_OnlyKeptCredibleSets_20260211.txt.gz", sep="\t", quote=F, row.names=F, col.names=T)
   fwrite(finemapping_per_variant_proc %>% filter(typeCisTrans == "cis"), "cis-eQTLs_allCredibleSetVariants_OnlyKeptCredibleSets_20251028.txt.gz", sep="\t", quote=F, row.names=F, col.names=T)
 
   # Get a summary table that outlines for all CSs how often a credible set contains various variant classes,
@@ -710,9 +842,11 @@ main <- function(argv = NULL) {
   # Perform enrichment analyses to test if we see more indels/SNPs/SVs than what is expected based on all tested variants
   # Now load a set of matching cis and trans-eQTL variants
   matching_set_cis <- read_parquet(variables["matching_set_cis"]) %>%
-    select(focal_index, variant_index) %>% mutate(matched_to_type="cis")
+    select(focal_index, variant_index) %>% mutate(matched_to_type="cis") %>%
+    filter(focal_index %in% as.character(independent_variant_set_annot_filtered$variant_index[!is.na(independent_variant_set_annot_filtered$SusieRss_CS)]))
   matching_set_trans <- read_parquet(variables["matching_set_trans"]) %>%
-    select(focal_index, variant_index) %>% mutate(matched_to_type="trans")
+    select(focal_index, variant_index) %>% mutate(matched_to_type="trans") %>%
+    filter(focal_index %in% as.character(independent_variant_set_annot_filtered$variant_index[!is.na(independent_variant_set_annot_filtered$SusieRss_CS)]))
 
   # Concatenate all matching variants, but remove possible duplicate variants so that every eQTL variant is represented with an approximate equal number of control variants
   matching_set_any <- as.data.table(bind_rows(matching_set_cis, matching_set_trans %>% anti_join(matching_set_cis, by = c("focal_index")))) %>%
@@ -739,10 +873,10 @@ main <- function(argv = NULL) {
     "yes" = finemapped_variant_classes,
     "no" = matching_set_any %>% filter(focal_index %in% finemapped_variant_classes$variant_index)), .id = "eqtl_variant")
 
-  variant_class_enrichments_eqtls <- variant_class_enrichments(finemapped_variant_classes_with_matched, col="eqtl_variant")
+  variant_class_enrichments_eqtls <- variant_class_enrichments(finemapped_variant_classes_with_matched, classes = "variant_class", group="eqtl_variant")
   variant_class_enrichments_eqtls
-  ggsave(sprintf("variant_class_enrichments_eqlts_%s.pdf", Sys.Date()), variant_class_enrichments_all$plot, width=50, height=50, units="mm")
-  fwrite(variant_class_enrichments_all$data, sprintf("variant_class_enrichments_%s.txt", Sys.Date()), sep="\t", row.names=F, col.names=T)
+  ggsave(sprintf("variant_class_enrichments_eqlts_%s.pdf", Sys.Date()), variant_class_enrichments_eqtls$plot, width=50, height=50, units="mm")
+  fwrite(variant_class_enrichments_eqtls$data, sprintf("variant_class_enrichments_%s.txt", Sys.Date()), sep="\t", row.names=F, col.names=T)
 
   # Second, test if there is an enrichment compared to control variants. This is limited to just unique variants. Also generates a figure
   finemapped_variant_classes_unique <- finemapping_variant_classes_per_cs %>%
@@ -810,6 +944,7 @@ main <- function(argv = NULL) {
   # Estimate how much larger beta's are of cis-eQTLs compared to trans-eQTls
   # First, get just the lead cis- and trans-effects per gene
   lead_effects <- independent_variant_set_annot_filtered %>%
+    filter(!is.na(SusieRss_CS)) %>%
     group_by(phenotype, typeCisTrans) %>%
     slice_max(abs(beta/standard_error), with_ties=F) %>%
     ungroup()
@@ -821,6 +956,8 @@ main <- function(argv = NULL) {
   # Estimate if there is a difference
   res <- wilcox.test(abs(lead_effects$beta[lead_effects$typeCisTrans=="cis"]),
                      abs(lead_effects$beta[lead_effects$typeCisTrans=="trans"]))
+
+  tidy(res) %>% as.vector()
 
   # Reformat the set of eQTLs:
   # Primarily, add the location of the gene relative to the variant
@@ -870,18 +1007,20 @@ main <- function(argv = NULL) {
 
   # For each coarse location of the variant relative to the gene, summarise the distribution fo CS ranks
   results_long_proc %>%
+    filter(!is.na(SusieRss_CS)) %>%
     mutate(cs_rank = as.numeric(cs_rank)) %>%
     group_by(location_relative_to_gene_fine) %>%
     summarise(min(cs_rank), max(cs_rank), mean(cs_rank), median(cs_rank), n())
 
   # CS rank higher upstream, intragenic, or downstream
   pairwise_mwu_res <- stats::pairwise.wilcox.test(
-      as.numeric(results_long_proc$cs_rank), results_long_proc$location_relative_to_gene_fine,
-      p.adjust.method = "bonferroni"
+    as.numeric(results_long_proc$cs_rank[!is.na(results_long_proc$SusieRss_CS)]),
+    results_long_proc$location_relative_to_gene_fine[!is.na(results_long_proc$SusieRss_CS)],
+    p.adjust.method = "bonferroni"
   )
 
   # Relationship between credible set rank and distance to gene body
-  results_long_proc %>% filter(typeCisTrans == "cis", location_relative_to_gene != "intragenic") %>%
+  results_long_proc %>% filter(typeCisTrans == "cis", location_relative_to_gene != "intragenic", !is.na(SusieRss_CS)) %>%
     select(cs_rank, distance, location_relative_to_gene) %>%
     group_by(location_relative_to_gene) %>%
     nest() %>%
@@ -905,11 +1044,35 @@ main <- function(argv = NULL) {
     tally() %>% ungroup() %>% mutate(percent = n / sum(n) * 100)
 
   # Plot the location of the variants relative to the linked genes for cis-eQTLs
-  fineampping_cs_ranks_plot <- credible_set_locations_relative_to_gene_patchwork(results_long_proc, window, gene_locus_colors)
+  fineampping_cs_ranks_plot <- credible_set_locations_relative_to_gene_patchwork(
+    results_long_proc %>% filter(!is.na(SusieRss_CS)), window, gene_locus_colors)
   # Combined plot
   ggsave(sprintf("finemapping_cs_ranks_%s.pdf", Sys.Date()), fineampping_cs_ranks_plot, width=104, height=58, units="mm")
 
-  gene_ranks <- fread(variables["expression_bins"])
+  # Get expression stats
+  expression_summary <- fread(variables["expression_summary"])
+
+  # Get cohort names
+  cohort_names <- colnames(expression_summary[,2:53])
+
+  # Calculate the average expression of all genes
+  expression_averaged <- expression_summary %>% group_by(gene) %>%
+    summarise(
+      mean_expression = mean(c_across(all_of(cohort_names)), na.rm = TRUE),
+      median_expression = median(c_across(all_of(cohort_names)), na.rm = TRUE),
+      n_cohorts_with_values = sum(!is.na(c_across(all_of(cohort_names))))
+    )
+
+  # Get gene ranks for the genes that are finemapped just for cis
+  gene_ranks_cis <- rank_genes(expression_summary, finemapped_genes_cis, method="RRA")
+  # Get gene ranks for the genes that are finemapped just for trans
+  gene_ranks_trans <- rank_genes(expression_summary, finemapped_genes_trans, method="RRA")
+
+  gene_ranks <- full_join(gene_ranks_cis, gene_ranks_trans, by = c("Name"), suffix=c("_cis", "_trans"))
+
+  gene_expression_summarised <- inner_join(expression_averaged, gene_ranks, by = c("gene" = "Name"))
+
+  fwrite(gene_expression_summarised, "gene_expression_metrics_20260626.txt.gz", sep="\t", row.names=F, col.names=T, quote=F, na="NA")
 
   # Get gnomad results
   # Use the mane gene transcript if available,
@@ -932,7 +1095,7 @@ main <- function(argv = NULL) {
     mutate(across(c("lof_z", "pLI", "mis_z", "syn_z"), ~ if_else(.x == -Inf, NA, .x) )) %>%
     mutate(across(c("loeuf"), ~ if_else(.x == Inf, NA, .x) ))
 
-  fwrite(geneMetrics4, "/Users/cawarmerdam/Documents/projects/eQTLGen/processed_data/gnomad_constraint_metrics_summarised_per_gene_id.tsv", sep="\t", row.names=F, col.names=T)
+  fwrite(geneMetrics4, "gnomad_constraint_metrics_summarised_per_gene_id_20260626.tsv", sep="\t", row.names=F, col.names=T)
 
   # Merge gene metrics with expression ranks
   gene_metrics_proc_4 <- gene_ranks %>%
@@ -946,7 +1109,7 @@ main <- function(argv = NULL) {
       typeCisTrans = if_else(type == "intermediate", "trans", type),
     ) %>%
     group_by(locus_str) %>%
-    summarise(n_CS_SuSiE = sum(!is.na(pip)),
+    summarise(n_CS_SuSiE = sum(!is.na(SusieRss_CS)),
               n_CS = n()) %>%
     ungroup() %>%
     summarise(
@@ -970,7 +1133,7 @@ main <- function(argv = NULL) {
     ) %>%
     group_by(phenotype, typeCisTrans) %>%
     mutate(n_CSs_per_gene = n(),
-           n_CSs_per_gene_SuSiE = sum(!is.na(pip)),
+           n_CSs_per_gene_SuSiE = sum(!is.na(SusieRss_CS)),
            varianceExplainedSum = min(sum(varianceExplained), 1),
            n_loci = n_distinct(finemapping_index)) %>%
     slice_max(abs(beta/standard_error), with_ties = F) %>%
@@ -979,15 +1142,18 @@ main <- function(argv = NULL) {
     mutate(
       n_CSs_per_gene = if_else(is.na(n_CSs_per_gene), 0, n_CSs_per_gene),
       n_CSs_per_gene_capped = if_else(n_CSs_per_gene > 10, 11, n_CSs_per_gene),
-      n_CSs_per_gene_ord_capped = ordered(n_CSs_per_gene_capped, labels=c(0:10, ">10")),
+      n_CSs_per_gene_ord_capped = ordered(n_CSs_per_gene_capped, levels=0:11, labels=c(0:10, ">10")),
+      n_CSs_per_gene_SuSiE = if_else(is.na(n_CSs_per_gene_SuSiE), 0, n_CSs_per_gene_SuSiE),
+      n_CSs_per_gene_SuSiE_capped = if_else(n_CSs_per_gene_SuSiE > 10, 11, n_CSs_per_gene_SuSiE),
+      n_CSs_per_gene_SuSiE_ord_capped = ordered(n_CSs_per_gene_SuSiE_capped, levels=0:11, labels=c(0:10, ">10")),
       any_CS = n_CSs_per_gene > 0,
       n_loci = if_else(is.na(n_loci), NA, n_loci),
       n_CSs_per_gene_SuSiE = if_else(is.na(n_CSs_per_gene_SuSiE), NA, n_CSs_per_gene_SuSiE),
       any_CS_SuSiE = n_CSs_per_gene_SuSiE > 0) %>%
     group_by(bin, typeCisTrans) %>%
-      mutate(ve_bin = ordered(
-        ntile(abs(varianceExplainedSum), 5),
-        labels=c("0-20th perc.", "20-40th perc.", "40-60th perc.", "60-80th perc.", "80-100th perc.")))
+    mutate(ve_bin = ordered(
+      ntile(abs(varianceExplainedSum), 5),
+      labels=c("0-20th perc.", "20-40th perc.", "40-60th perc.", "60-80th perc.", "80-100th perc.")))
 
   # Now, calculate an average across the cis and trans eQTL types
   summary_cis_trans_finemapping <- per_gene_type_combination %>%
@@ -1011,32 +1177,44 @@ main <- function(argv = NULL) {
 
   # Also list CS sizes
   results_CS_sizes <- results_long_proc %>%
-    group_by(is.na(pip), typeCisTrans) %>%
+    group_by(is.na(SusieRss_CS), typeCisTrans) %>%
     summarise(n_CSs = n(),
               n_CS_size_any = sum(!is.na(CS_size)),
-              n_CSS = sum(!is.na(pip)),
-              mean_CS_size = mean(CS_size),
+              n_CSS = sum(!is.na(SusieRss_CS)),
+              mean_CS_size = mean(CS_size, na.rm=T),
               n_CS_size_exactly_1 = sum(CS_size == 1),
               n_CS_size_exactly_1_pip_over_90p = sum(CS_size == 1 & pip > 0.9))
 
   print(results_CS_sizes, width=Inf)
 
+  meta_qc_full <- fread(variables["lambdas_discovery"])
+  meta_qc_eur <- fread(variables["lambdas_eur"])
+
   # Write gene summary for the supplement
   per_gene_type_combination_for_supplement <- per_gene_type_combination %>%
     group_by(phenotype) %>%
-    mutate(gene_name = case_when(any(!is.na(gene_name)) ~ na.omit(gene_name)[1], TRUE ~ gene_name)) %>%
+    mutate(gene_name = case_when(any(!is.na(gene_name)) ~ na.omit(gene_name)[1], TRUE ~ gene_name),
+           seqid = case_when(any(!is.na(seqid)) ~ na.omit(seqid)[1], TRUE ~ seqid)) %>%
     ungroup() %>%
-    select(phenotype, gene_name, typeCisTrans, n_CSs_per_gene, bin, Score) %>%
-    pivot_wider(values_from=c(n_CSs_per_gene, bin, Score), names_from="typeCisTrans") %>%
-    left_join(geneMetrics4, by = c("phenotype" = "gene_id"))
+    select(phenotype, seqid, gene_name, typeCisTrans, n_CSs_per_gene, n_CSs_per_gene_SuSiE, bin, Score) %>%
+    pivot_wider(id_cols = c("phenotype", "seqid", "gene_name"),
+                values_from=c(n_CSs_per_gene, n_CSs_per_gene_SuSiE, bin, Score),
+                names_from="typeCisTrans") %>%
+    mutate(across(starts_with("n_CSs_per_gene"), ~ replace_na(.x,0))) %>%
+    left_join(geneMetrics4, by = c("phenotype" = "gene_id")) %>%
+    left_join(meta_qc_full, by = c("phenotype" = "gene")) %>%
+    left_join(meta_qc_eur, by = c("phenotype" = "gene"), suffix=c("_discovery", "_EUR"))
 
-  fwrite(per_gene_type_combination_for_supplement, "per_gene_type_combination_for_supplement.txt", sep="\t", col.names=T, row.names=F)
+  openxlsx::write.xlsx(per_gene_type_combination_for_supplement, "per_gene_type_combination_for_supplement.xlsx")
 
   # Plot the relationship between the number of eQTL credible sets, expression and gene conservation
-  eqtls_per_gene <- eqtl_overview_plot(per_gene_type_combination)
-  eqtls_per_gene
-  ggsave("eqtls_per_gene_v2.pdf", eqtls_per_gene, width=130, height=86, units="mm")
+  #eqtls_per_gene <- eqtl_overview_plot(
+  #  per_gene_type_combination %>% filter(any_CS_SuSiE | !any_CS), n_cs_col="n_CSs_per_gene_SuSiE", n_cs_ordinal_col="n_CSs_per_gene_SuSiE_ord_capped", any_cs_col = "any_CS_SuSiE")
+  eqtls_per_gene <- eqtl_overview_plot(
+    per_gene_type_combination, n_cs_col="n_CSs_per_gene", n_cs_ordinal_col="n_CSs_per_gene_ord_capped", any_cs_col = "any_CS")
 
+  eqtls_per_gene
+  ggsave(sprintf("eqtls_per_gene_%s.pdf", Sys.Date()), eqtls_per_gene, width=130, height=86, units="mm")
   # Plot the relationship between the number of eQTL credible sets, expression and gene conservation,
   # but using violin plots, and for supplements
   p_sup_cis <- eqtl_credible_set_leouf_supplement(per_gene_type_combination %>% filter(typeCisTrans == "cis"))
@@ -1045,20 +1223,29 @@ main <- function(argv = NULL) {
   ggsave("eqtls_per_gene_supplement_cis.png", p_sup_cis, width=180, height=180, units="mm")
   ggsave("eqtls_per_gene_supplement_trans.png", p_sup_trans, width=180, height=180, units="mm")
 
+  p_sup_cis <- eqtl_credible_set_leouf_supplement(per_gene_type_combination %>% filter(typeCisTrans == "cis"))
+  p_sup_trans <- eqtl_credible_set_leouf_supplement(per_gene_type_combination %>% filter(typeCisTrans == "trans"))
+
+  ggsave("eqtls_per_gene_supplement_cis.png", p_sup_cis, width=180, height=180, units="mm")
+  ggsave("eqtls_per_gene_supplement_trans.png", p_sup_trans, width=180, height=180, units="mm")
+
   # Perform tests to understand the relationships were are seeing.
   per_gene_type_combination_cis <- per_gene_type_combination %>% filter(typeCisTrans == "cis") %>%
-    filter(!is.na(lof_z_mane), is.finite(lof_z_mane)) %>%
-    select(phenotype, any_CS, lof_z_mane, Score, bin, pLI_mane) %>%
+    select(phenotype, any_CS_SuSiE, any_CS, lof_z_mane, Score, bin, pLI_mane) %>%
     mutate(bin_num = as.numeric(bin))
 
   # Check if there is a difference in expression bin for the fine-mapped eQTLs and the eQTLs that were not fine-mapped
-  wilcox.test(per_gene_type_combination_cis$bin_num[per_gene_type_combination_cis$any_CS], per_gene_type_combination_cis$bin_num[!per_gene_type_combination_cis$any_CS])
+  wilcox.test(per_gene_type_combination_cis$bin_num[per_gene_type_combination_cis$any_CS_SuSiE], per_gene_type_combination_cis$bin_num[!per_gene_type_combination_cis$any_CS])
   ggplot(per_gene_type_combination_cis, aes(any_CS, Score)) + geom_violin() + geom_boxplot(width=0.1)
 
-  # Check if there is a difference for the gene expression bins with the bins 6-10
-  per_gene_type_combination_cis_bin6_10 <- per_gene_type_combination_cis %>% filter(bin %in% paste0("Bin",6:10))
+  per_gene_type_combination_cis_non_na_lof <- per_gene_type_combination_cis %>%
+    filter(!is.na(lof_z_mane), is.finite(lof_z_mane))
 
-  wilcox.test(per_gene_type_combination_cis$pLI_mane[per_gene_type_combination_cis$any_CS], per_gene_type_combination_cis$pLI_mane[!per_gene_type_combination_cis$any_CS])
+  wilcox.test(per_gene_type_combination_cis_non_na_lof$pLI_mane[per_gene_type_combination_cis_non_na_lof$any_CS_SuSiE], per_gene_type_combination_cis_non_na_lof$pLI_mane[!per_gene_type_combination_cis_non_na_lof$any_CS])
+
+  # Check if there is a difference for the gene expression bins with the bins 6-10
+  per_gene_type_combination_cis_bin6_10 <- per_gene_type_combination_cis_non_na_lof %>% filter(bin %in% paste0("Bin",6:10))
+
   wilcox.test(per_gene_type_combination_cis_bin6_10$pLI_mane[per_gene_type_combination_cis_bin6_10$any_CS], per_gene_type_combination_cis_bin6_10$pLI_mane[!per_gene_type_combination_cis_bin6_10$any_CS])
   ggplot(per_gene_type_combination_cis, aes(any_CS, pLI_mane)) + geom_violin() + geom_boxplot(width=0.1)
 
@@ -1070,22 +1257,32 @@ main <- function(argv = NULL) {
 
   # Check the relationship for the most expressed genes. This is the rightmost panel in figure 2b
   per_gene_type_combination_proc_bin10_cis <- per_gene_type_combination %>% filter(typeCisTrans == "cis", bin == "Bin10") %>%
-    left_join(downloads, by = c("phenotype")) %>%
     filter(!is.na(loeuf_mane), is.finite(loeuf_mane))
+
+  # Define color ramp: light to base color
+  base_color <- "#0072B2"
+  # A strong blue
+  light_color <- "#C3E9FD"
+  # A lighter blue (or use "white")
+
+  # Create function for n shades from light to base
+  n_colors <- 11
+  # Adjust based on your L range
+  color_func <- colorRampPalette(c(base_color, light_color))
 
   # Plot the rightmost panel in figure 2b
   bin10_loeuf <- ggplot(per_gene_type_combination_proc_bin10_cis,
-         aes(n_CSs_per_gene, loeuf_mane, fill = n_CSs_per_gene_ord_capped, group = n_CSs_per_gene_ord_capped)) +
+                        aes(n_CSs_per_gene_SuSiE, loeuf_mane, fill = n_CSs_per_gene_SuSiE_ord_capped, group = n_CSs_per_gene_SuSiE_ord_capped)) +
     geom_violin(linewidth=0) +
     geom_boxplot(width=0.1, fill="white") +
     scale_fill_manual(name = "Number of eQTLs", values = c("grey90", color_func(11)), guide=NULL) +
     scale_x_continuous(name = "number of eQTLs") +
     coord_cartesian(clip = "on") +
     scale_y_continuous(name = "LOEUF", breaks = c(0, 0.5, 1.0, 1.5, 2)) +
-    geom_smooth(aes(n_CSs_per_gene, loeuf_mane), method = "lm", color = "#D55E00", inherit.aes=F,
+    geom_smooth(aes(n_CSs_per_gene_SuSiE, loeuf_mane), method = "lm", color = "#D55E00", inherit.aes=F,
                 linewidth=(1 / (ggplot2::.pt * 72.27/96)))
-
-  ggsave("n_eqtls_vs_loeuf_bin10_cis.pdf", bin10_loeuf, width=72, height=54, units="mm")
+  bin10_loeuf
+  ggsave(sprintf("n_eqtls_vs_loeuf_bin10_cis_%s.pdf", Sys.Date()), bin10_loeuf, width=72, height=54, units="mm")
 
   # Check what is happening for trans bin4
   per_gene_type_combination_proc_bin4_trans <- per_gene_type_combination %>% filter(typeCisTrans == "trans", bin == "Bin4") %>%
@@ -1095,17 +1292,17 @@ main <- function(argv = NULL) {
     filter(!is.na(loeuf_mane), is.finite(loeuf_mane))
 
   # Plot the relationshop for trans bin4
-    ggplot(per_gene_type_combination_proc_bin4_trans,
-           aes(n_CSs_per_gene, loeuf_mane, color = n_CSs_per_gene_ord_capped)) +
+  ggplot(per_gene_type_combination_proc_bin4_trans,
+         aes(n_CSs_per_gene, loeuf_mane, color = n_CSs_per_gene_ord_capped)) +
     geom_point(color = "black", alpha = 0.1) +
     stat_summary(fun.data = mean_se, fun.args = list(mult = 1), shape = 20,
-    size=(0.25 / (ggplot2::.pt * 72.27/96)), linewidth=(0.5 / (ggplot2::.pt * 72.27/96)),
-    geom = "pointrange") +
+                 size=(0.25 / (ggplot2::.pt * 72.27/96)), linewidth=(0.5 / (ggplot2::.pt * 72.27/96)),
+                 geom = "pointrange") +
     scale_x_continuous(name = "number of eQTLs") +
     coord_cartesian(clip = "on") +
     scale_y_continuous(name = "LOEUF", breaks = c(0.5, 0.75, 1.0, 1.25)) +
     geom_smooth(method = "lm", aes(color = -1), color = "#D55E00",
-    linewidth=(1 / (ggplot2::.pt * 72.27/96)))
+                linewidth=(1 / (ggplot2::.pt * 72.27/96)))
 
   per_gene_type_combination_bin4_trans <- per_gene_type_combination %>% filter(typeCisTrans == "trans", bin == "Bin4")
 
@@ -1123,23 +1320,164 @@ main <- function(argv = NULL) {
 
   # Plot the relationship between beta's, LoF Z-scores and eQTL type
   beta_lof_z_plot <- plot_beta_lof_summary_split_facets(
-    data = per_gene_type_combination %>% ungroup(),
+    data = per_gene_type_combination %>% filter(!is.na(SusieRss_CS)) %>% ungroup(),
     cis_trans_color_scale = cis_trans_color_scale
   )
-
   print(beta_lof_z_plot)
-
   ggsave("beta_to_lof_z.pdf", beta_lof_z_plot, width=48, height=72, units="mm")
 
+  eqtls <- per_gene_type_combination %>% ungroup() %>% filter(any_CS) %>%
+    mutate(beta_aligned_to_minor = beta * sign(0.5 - eaf),
+           beta_aligned_to_alt = beta) %>%
+    select(typeCisTrans, starts_with("beta_aligned")) %>%
+    pivot_longer(starts_with("beta_aligned"),
+                 names_pattern="beta_(.+)",
+                 values_to="beta", names_to="beta_type") %>%
+    filter(beta_type == "aligned_to_alt")
+
+  panel_stats <- eqtls %>%
+    group_by(typeCisTrans, beta_type) %>%
+    summarise(
+      n = n(),
+      mean = mean(beta, na.rm = TRUE),
+      sd_beta = sd(beta, na.rm = TRUE),
+      se_beta = sd_beta / sqrt(n),
+      median = median(beta, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    left_join(
+      eqtls %>%
+        group_by(typeCisTrans, beta_type) %>%
+        group_modify(~{
+          tidy(t.test(.x$beta, mu = 0))
+        }) %>% select(p_mean0 = p.value),
+      by = c("typeCisTrans", "beta_type")
+    ) %>%
+    left_join(
+      eqtls %>%
+        group_by(typeCisTrans, beta_type) %>%
+        group_modify(~{
+          tidy(wilcox.test(.x$beta, mu = 0))
+        }) %>%
+        select(p_wilcox0 = p.value),
+      by = c("typeCisTrans", "beta_type")
+    ) %>%
+    mutate(
+      label = sprintf(
+        "n = %.0f\nmedian = %.3f\nmean (sd) = %.3f (%.3f)\nSE = %.3g\np(mean=0) = %.2e",
+        n, median, mean, sd_beta, se_beta, p_mean0
+      )
+    )
+
+  beta_distribution_plot_signed <- ggplot(eqtls, aes(beta)) +
+    geom_histogram(center = 0.01, binwidth = 0.02) +
+    facet_grid(
+      rows = vars(typeCisTrans)
+    ) +
+    geom_text(
+      data = panel_stats,
+      aes(
+        x = Inf,
+        y = Inf,
+        label = label
+      ),
+      inherit.aes = FALSE,
+      size = 6/.pt,
+      hjust = 1,
+      vjust = 1
+    ) +
+    ylab("count")
+  beta_distribution_plot_signed
+
+  ggsave("beta_dist_signed.png", width=150, height=150, units="mm")
+
+  cis_trans_wilcox <- eqtls %>%
+    group_by(beta_type) %>%
+    group_modify(~{
+      tidy(
+        wilcox.test(
+          beta ~ typeCisTrans,
+          data = .x,
+          conf.int = TRUE
+        )
+      )
+    })
+
+  cis_trans_t <- eqtls %>%
+    group_by(beta_type) %>%
+    group_modify(~{
+      tidy(
+        t.test(
+          .x$beta ~ .x$typeCisTrans,
+          conf.int = TRUE
+        )
+      )
+    })
+
+  cis_trans_t
+
+  cis_trans_wilcox %>%
+    transmute(
+      beta_type,
+      estimate,
+      conf.low,
+      conf.high,
+      p.value
+    )
+
+
+  wilcox_res <- wilcox.test(
+    beta ~ typeCisTrans,
+    data = eqtls,
+    conf.int = TRUE
+  ) %>%
+    tidy()
+
+  dist_stats <- eqtls %>%
+    group_by(typeCisTrans) %>%
+    summarise(
+      n = n(),
+      mean = mean(beta, na.rm = TRUE),
+      sd = sd(beta, na.rm = TRUE),
+      median = median(beta, na.rm = TRUE),
+      mad = mad(beta, na.rm = TRUE),
+      q05 = quantile(beta, 0.05, na.rm = TRUE),
+      q25 = quantile(beta, 0.25, na.rm = TRUE),
+      q75 = quantile(beta, 0.75, na.rm = TRUE),
+      q95 = quantile(beta, 0.95, na.rm = TRUE),
+      iqr = IQR(beta, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+
+  summary_table <- bind_cols(
+    dist_stats,
+    tibble(
+      wilcox_p = wilcox_res$p.value,
+      wilcox_estimate = wilcox_res$estimate
+    )
+  )
+
+  summary_table
+
+  eqtls %>%
+    group_by(typeCisTrans) %>%
+    group_modify(~{
+      wilcox.test(.x$beta_flipped_minor, mu = 0, conf.int = TRUE) %>%
+        tidy()
+    })
+
+  wilcox_res
+
   per_gene_type_combination %>% pivot_wider(id_cols = c(phenotype, bin), names_from=typeCisTrans, values_from = n_CSs_per_gene) %>%
-  ggplot(aes(trans, cis, color=bin)) +
+    ggplot(aes(trans, cis, color=bin)) +
     geom_jitter() +
     facet_wrap(vars(bin))
 
   per_gene_type_combination %>%
     group_by(typeCisTrans, n_CSs_per_gene) %>%
     summarise(n_genes = n()) %>%
-  ggplot(aes(n_CSs_per_gene, n_genes, color=typeCisTrans)) +
+    ggplot(aes(n_CSs_per_gene, n_genes, color=typeCisTrans)) +
     geom_line(aes(group=typeCisTrans), color="grey") +
     geom_point(shape=20) +
     scale_colour_manual(values= cis_trans_color_scale) +
@@ -1192,10 +1530,11 @@ main <- function(argv = NULL) {
   # Define table with all trans-eQTls and their annotations to match on
   # Define table with all background cis-eQTLs and their annotations to match on
 
-    annotated_finemapped_variants <- left_join(
-      variant_annotations,
-      independent_variant_set_annot_filtered %>%
-        distinct(variant_index, typeCisTrans))
+  annotated_finemapped_variants <- left_join(
+    variant_annotations,
+    independent_variant_set_annot_filtered %>%
+      filter(!is.na(SusieRss_CS)) %>%
+      distinct(variant_index, typeCisTrans))
 
   # Here calculate VIP enrichments
   matching_focal_variants <- unique(c(matching_set_cis$focal_index, matching_set_trans$focal_index))
@@ -1209,7 +1548,7 @@ main <- function(argv = NULL) {
     group_by(variant) %>%
     slice_max(consequence_as_ordered, with_ties = F, n=1) %>%
     right_join(variant_annotations, by = c("variant")) %>%
-      mutate(consequence = ifelse(is.na(consequence), "intergenic_variant", consequence))
+    mutate(consequence = ifelse(is.na(consequence), "intergenic_variant", consequence))
 
   variant_consequnce_per_eqtl <- independent_variant_set_annot_filtered %>%
     inner_join(vip_largest_cons_raw) %>%
@@ -1240,8 +1579,7 @@ main <- function(argv = NULL) {
       n_observed = n(),
       n_with_matched = sum(is.na(matched) | matched))
 
-  fwrite(vip_matched_control_dataset, "variant_consequence_counts_per_group_20251020.txt.gz", sep="\t", col.names=T, row.names=F)
-  vip_matched_control_dataset <- fread("~/Documents/projects/eQTLGen/users/umcg-rwarmerdam/variant_consequence_counts_per_group_20250612.txt.gz")
+  fwrite(vip_matched_control_dataset, sprintf("variant_consequence_counts_per_group_%s.txt.gz", Sys.Date()), sep="\t", col.names=T, row.names=F)
 
   fisher_enrichments <- vip_matched_control_dataset %>%
     pivot_wider(id_cols = c(consequence, typeCisTrans), names_from = group, values_from = c(n_with_matched, n_observed), values_fill = 0) %>%
@@ -1261,9 +1599,10 @@ main <- function(argv = NULL) {
       consequence = recode(consequence, !!!ensembl_consequence_labels),
       consequence = ordered(
         consequence,
-        levels = unique(c(consequence, "Intergenic"), fromLast = F)))
+        levels = unique(c(consequence, "Intergenic"), fromLast = F))) %>%
+    arrange(consequence, typeCisTrans)
 
-  fwrite(fisher_enrichments, "variant_consequence_enrichments_20251020.txt.gz", sep="\t", col.names=T, row.names=F)
+  fwrite(fisher_enrichments, sprintf("variant_consequence_enrichments_%s.txt.gz", Sys.Date()), sep="\t", col.names=T, row.names=F)
 
 
   labelled_consequences <- fisher_enrichments %>%
@@ -1282,7 +1621,8 @@ main <- function(argv = NULL) {
            bonferroni_alpha = 0.05 / n_tests,
            formatted_p = if_else(fischer_p.value < bonferroni_alpha, "'*'", ""))
 
-  fwrite(fisher_enrichments2, "variant_consequence_enrichments_20251020.txt.gz", sep="\t", col.names=T, row.names=F)
+  fwrite(fisher_enrichments2, sprintf("variant_consequence_enrichments_2_%s.txt.gz", Sys.Date()), sep="\t", col.names=T, row.names=F)
+  #fwrite(fisher_enrichments2, "variant_consequence_enrichments_20251020.txt.gz", sep="\t", col.names=T, row.names=F)
 
 
   fisher_enrichments %>% group_by(typeCisTrans) %>%
@@ -1304,7 +1644,7 @@ main <- function(argv = NULL) {
 
   # Create the table-like plot
   table_plot_sign <- ggplot(fisher_enrichments2 %>% group_by(consequence2) %>% filter(any(n_with_matched_actual > 10)),
-                       aes(x=1, y = consequence2, colour=typeCisTrans)) +
+                            aes(x=1, y = consequence2, colour=typeCisTrans)) +
     geom_text(aes(label = formatted_p),
               hjust = 0, position=position_dodge2(preserve = "single", width=1), size=4, size.unit = "pt", parse=T) +
     scale_x_continuous(limits = c(0.9, 1.1), breaks = c(), name="", expand=c(0,0)) +
@@ -1343,6 +1683,59 @@ main <- function(argv = NULL) {
 
   ggsave("variant_consequences.pdf", width=72, height=112, units="mm")
 
+  correlation_estimates <- independent_variant_set_annot_filtered %>%
+    group_by(typeCisTrans) %>%
+    summarise(Rb_list = list(calcu_cor_true(beta, standard_error, beta_eur, standard_error_eur, theta = 1))) %>%
+    unnest_wider(col=Rb_list, names_sep="_")
+
+  beta_comparison <- ggplot(independent_variant_set_annot_filtered, aes(beta, beta_eur)) +
+    geom_vline(aes(xintercept=0), color="grey70") +
+    geom_hline(aes(yintercept=0), color="grey70") +
+    geom_point(shape=16, alpha=0.1, size=1 / (ggplot2::.pt * 72.27/96)) +
+    geom_text(
+      data = correlation_estimates %>% mutate(label = sprintf("Rb = %.4f\nSE(Rb) = %.4f\np(Rb) = %.1e", Rb_list_Rb, `Rb_list_SE(Rb)`, `Rb_list_p(Rb)`)),
+      aes(
+        x = -Inf,
+        y = Inf,
+        label = label
+      ),
+      inherit.aes = FALSE,
+      size = 6/.pt,
+      color = "#D55E00",
+      hjust = 0,
+      vjust = 1,
+    ) + xlab("Beta from discovery meta-analysis") + ylab("Beta for European meta-analysis") +
+    facet_wrap(vars(typeCisTrans), scales="free")
+
+  correlation_estimates_z <- independent_variant_set_annot_filtered %>%
+    group_by(typeCisTrans) %>%
+    summarise(cor_list = tidy(cor.test(beta/standard_error, beta_eur/standard_error_eur, theta = 1))) %>%
+    unnest_wider(col=cor_list, names_sep="_") %>%
+    mutate(label = sprintf("Pearson R = %.4f\nSE(R) = %.4f\np(R) = %.1e", cor_list_estimate, cor_list_, `cor_list_p.value`))
+
+  z_score_comparison <- ggplot(independent_variant_set_annot_filtered, aes(beta/standard_error, beta_eur/standard_error_eur)) +
+    geom_abline(color="black") +
+    geom_vline(aes(xintercept=0), color="grey70") +
+    geom_hline(aes(yintercept=0), color="grey70") +
+    geom_point(shape=16, alpha=0.1, size=1 / (ggplot2::.pt * 72.27/96)) +
+    geom_text(
+      data = correlation_estimates_z,
+      aes(
+        x = -Inf,
+        y = Inf,
+        label = label
+      ),
+      inherit.aes = FALSE,
+      size = 6/.pt,
+      color = "#D55E00",
+      hjust = 0,
+      vjust = 1,
+    ) + xlab("Z-score discovery meta-analysis") + ylab("Z-score European meta-analysis") +
+    facet_wrap(vars(typeCisTrans), scales="free")
+
+  combined_eur <- beta_comparison / z_score_comparison
+
+  ggsave("combined_eur.pdf", combined_eur, width=180, height=180, units="mm")
 }
 
 if (sys.nframe() == 0 && !interactive()) {

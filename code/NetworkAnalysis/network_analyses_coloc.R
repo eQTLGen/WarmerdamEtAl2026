@@ -1,6 +1,5 @@
 #!/usr/bin/env Rscript
-#' Script for peforming network analyses. I.e.: Identify disease relevant genes on which multiple risk alleles
-#' converge through the gene network.
+
 
 # Load libraries
 library(argparse)
@@ -103,7 +102,8 @@ calculate_gene_scores <- function(disease_gene_paths) {
   gene_scores <- disease_gene_paths[
     , .(sign_sum = sum(sign),
         activating = sum(sign>0),
-        repressing = sum(sign<0)),
+        repressing = sum(sign<0),
+        associations = paste(eqtl_variant, sign, collapse=",", sep=":")),
       by = .(gene, dist, first_edge_cis_trans)
   ]
 
@@ -111,7 +111,7 @@ calculate_gene_scores <- function(disease_gene_paths) {
   gene_scores_wide <- dcast(
     gene_scores,
     gene ~ first_edge_cis_trans + dist,
-    value.var = c("sign_sum", "activating", "repressing"),
+    value.var = c("sign_sum", "activating", "repressing", "associations"),
     fill = 0
   )
 
@@ -924,19 +924,19 @@ get_gwas_distance_matrix <- function(gwas_dataset_path, uncorrelated_variant_pat
     }
 
     uncorrelated_variants <- fread(uncorrelated_variant_path, header=F, col.names=c("variant")) %>%
-    inner_join(variant_annotations)
+      inner_join(variant_annotations)
 
     uncorrelated_gwas_variants <- gwas_ds %>%
-    filter(variant_index %in% uncorrelated_variants$variant_index) %>%
-    select(gwas_id, beta, se, variant_index, N) %>%
-    collect()
+      filter(variant_index %in% uncorrelated_variants$variant_index) %>%
+      select(gwas_id, beta, se, variant_index, N) %>%
+      collect()
 
     pearson_r_matrix <- uncorrelated_gwas_variants %>%
-    mutate(pearson_rho = tToCor(beta/se, N - 1)) %>%
-    group_by(gwas_id, variant_index) %>%
-    slice_min(beta/se) %>%
-    pivot_wider(id_cols="variant_index", names_from="gwas_id", values_from = "pearson_rho") %>%
-    as.data.table() %>% as.matrix(rownames="variant_index")
+      mutate(pearson_rho = tToCor(beta/se, N - 1)) %>%
+      group_by(gwas_id, variant_index) %>%
+      slice_min(beta/se) %>%
+      pivot_wider(id_cols="variant_index", names_from="gwas_id", values_from = "pearson_rho") %>%
+      as.data.table() %>% as.matrix(rownames="variant_index")
 
     pairwise_gwas_correlations <- cor(pearson_r_matrix, use="pairwise.complete.obs")
     saveRDS(pairwise_gwas_correlations, cache_path)
@@ -944,7 +944,7 @@ get_gwas_distance_matrix <- function(gwas_dataset_path, uncorrelated_variant_pat
   } else {
     pairwise_gwas_correlations <- readRDS(cache_path)
     pairwise_gwas_correlations <- pairwise_gwas_correlations[rownames(pairwise_gwas_correlations) != "PASS_Lupus",
-    colnames(pairwise_gwas_correlations) != "PASS_Lupus"]
+                                                             colnames(pairwise_gwas_correlations) != "PASS_Lupus"]
 
   }
   gwas_dist_mat <- pairwise_gwas_correlations > 0.2
@@ -972,7 +972,7 @@ get_or_null <- function(config, key) {
 # Main
 
 #' Execute main
-#' 
+#'
 #' @param argv A vector of arguments normally supplied via command-line.
 main <- function(argv = NULL) {
   if (is.null(argv)) {
@@ -1008,6 +1008,7 @@ main <- function(argv = NULL) {
   parser$add_argument("--gwas_eqtl_coloc", default = get_or_null(config, "gwas_eqtl_coloc"))
   parser$add_argument("--eqtl_matrix", default = get_or_null(config, "eqtl_matrix"))
   parser$add_argument("--sc_replication", default = get_or_null(config, "sc_replication_path"))
+  parser$add_argument("--finemapped_variant_ld", default = get_or_null(config, "finemapped_variant_ld"))
   parser$add_argument("--disable_sc_cond", default = T, action="store_false", dest="force_sc_replication")
 
   # Outputs
@@ -1067,7 +1068,7 @@ main <- function(argv = NULL) {
   force_single_cell_replication <- args$force_sc_replication
   gwas_eqtl_coloc <- fread(args$gwas_eqtl_coloc)
 
-  precalculated_ld_path <- "/groups/umcg-fg/tmp04/projects/eqtlgen-phase2/fine_mapping/output/genome_wide_finemapping_susie_20250314/finemapped/fix_20250509/ld_matrices_20250509.rds"
+  precalculated_ld_path <- args$finemapped_variant_ld
   ld_matrices <- readRDS(precalculated_ld_path)
 
   r2_threshold <- 0.5
@@ -1103,7 +1104,7 @@ main <- function(argv = NULL) {
     path_table_filtered <- readRDS(filtered_path_table)
   }
 
-  gwas_to_test <- intersect(non_blood_cell_type_traits, rownames(gwas_dist_mat))
+  gwas_to_test <- rownames(gwas_dist_mat)
 
   gene_prioritization_random_variants <- bind_rows(mapply(function(focal_gwas_id, i) {
     message(sprintf("GWAS %s: %s", i, focal_gwas_id))

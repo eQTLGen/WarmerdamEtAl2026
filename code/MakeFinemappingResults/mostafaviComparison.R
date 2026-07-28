@@ -87,12 +87,13 @@ calculate_se_or <- function(actual_within_10kb, actual_total, control_within_10k
 compare_case_control_10kb <- function(data) {
 
   results <- data %>%
+    filter(!is.na(class), class != "") %>%
     group_by(class) %>%
     summarize(
       actual_within_10kb = sum(within_10kb[control == "Actual"], na.rm = TRUE),   # Count of Actual SNPs within 10kb
-      actual_total = sum(!within_10kb[control == "Actual"], na.rm = TRUE),                     # Total Actual SNPs
+      actual_total = sum(control == "Actual", na.rm = TRUE),                     # Total Actual SNPs
       control_within_10kb = sum(within_10kb[control == "Control"], na.rm = TRUE), # Count of Control SNPs within 10kb
-      control_total = sum(!within_10kb[control == "Control"], na.rm = TRUE)                   # Total Control SNPs
+      control_total = sum(control == "Control", na.rm = TRUE)                   # Total Control SNPs
     ) %>%
     rowwise() %>%
     mutate(
@@ -168,7 +169,7 @@ lift_to_build_38 <- function(gwas_data, liftover_chain_file) {
 # Main
 
 #' Execute main
-#' 
+#'
 #' @param argv A vector of arguments normally supplied via command-line.
 main <- function(argv = NULL) {
   if (is.null(argv)) {
@@ -183,6 +184,8 @@ main <- function(argv = NULL) {
            SNP_MAPPING_ID = paste(chromosome, bp, pmin(eff_allele, non_eff_allele), pmax(eff_allele, non_eff_allele), sep="_")) %>%
     group_by(SNP_MAPPING_ID) %>%
     filter(n_distinct(variant) == 1)
+
+  results_phase2_susie <- results_phase2 %>% filter(!is.na(SusieRss_CS))
 
   variant_reference <- read_parquet(variables["variants_with_unique_mapping_ids"])
 
@@ -229,10 +232,12 @@ main <- function(argv = NULL) {
   # Removed SNPs in LD to missense SNPs or protein truncating SNPs.
   # No MHC (chr6:28477797-33448354)
 
-  eqtl_hits_annotated <- results_phase2 %>%
+  eqtl_hits_annotated <- results_phase2_susie %>%
+    select(SNP_MAPPING_ID, type, phenotype) %>%
     inner_join(snp_annotations_proc, by=c("SNP_MAPPING_ID" = "SNP_MAPPING_ID"), relationship = "many-to-many")
 
   gwas_hits_annotated <- gwas_hits %>%
+    select(SNP, phenotype = trait) %>%
     inner_join(snp_annotations_proc, by=c("SNP" = "SNP"), relationship = "many-to-one")
 
   combined_results <- bind_rows(list("eQTL" = eqtl_hits_annotated, "GWAS" = gwas_hits_annotated), .id = "superclass") %>%
@@ -240,7 +245,7 @@ main <- function(argv = NULL) {
       superclass == "GWAS" ~ "GWAS hits",
       superclass == "eQTL" & type == "cis" ~ "cis-eQTL",
       superclass == "eQTL" & type == "trans" ~ "trans-eQTL")) %>%
-    select(c("SNP", "class", "MAF", "L2", "TSSD", "d_tss"))
+    select(c("SNP", "class", "MAF", "L2", "TSSD", "d_tss", "phenotype"))
   # From every group, select eQTLs/GWAS hits with approximate equal MAF, LD score and gene density
 
   max_maf_delta <- 0.02
@@ -268,7 +273,7 @@ main <- function(argv = NULL) {
   ), nomatch = 0L, allow.cartesian = TRUE]
 
   # Group by each focal SNP (SNP from combined_results) and sample 1,000 SNPs per group with replacement
-  bootstrapped_results <- matched_snps[, .SD[sample(.N, 1000, replace = T)], by = .(SNP, class)]
+  bootstrapped_results <- matched_snps[, .SD[sample(.N, 1000, replace = T)], by = .(SNP, class, phenotype)]
 
   saveRDS(bootstrapped_results, "control_snps.rds")
   bootstrapped_results <- readRDS("control_snps.rds")
@@ -276,7 +281,7 @@ main <- function(argv = NULL) {
   control_snps <- bootstrapped_results %>%
     mutate(MATCHED_SNP = SNP_MAPPING_ID) %>%
     filter(i.SNP_MAPPING_ID != MATCHED_SNP) %>%
-    select(SNP_MAPPING_ID = i.SNP_MAPPING_ID, SNP = i.SNP, class, MATCHED_SNP)
+    select(SNP_MAPPING_ID = i.SNP_MAPPING_ID, SNP = i.SNP, class, phenotype, MATCHED_SNP)
 
   #
   # control_snps <- fread("~/Downloads/control_snps.txt.gz")
@@ -291,9 +296,10 @@ main <- function(argv = NULL) {
     list("Actual" = combined_results,
          "Control" = control_snps_merged), .id="control") %>%
     mutate(
-      class = if_else(is.na(class), "trans-eQTL", class),
       class_nested = case_when(control == "Actual" ~ class,
                              control == "Control" ~ paste0(class, " - matched SNPs")))
+
+  saveRDS(combined_results_with_controls, "combined_results_with_controls.rds")
 
   combined_results_with_controls$abs_d_tss <- abs(combined_results_with_controls$d_tss)
   combined_results_with_controls$within_10kb <- combined_results_with_controls$abs_d_tss <= 10000
@@ -330,9 +336,9 @@ main <- function(argv = NULL) {
 
   ggsave(file.path(".", sprintf(
     "mostafavi_bar_chart.%s.pdf", format(Sys.Date(), "%Y%m%d"))), ors, width=80, height=60, units = "mm")
-  plot_to_pdf(
-    ors, file.path(".", sprintf(
-      "mostafavi_bar_chart.%s.pdf", format(Sys.Date(), "%Y%m%d"))), width = 3, height = 7)
+  # plot_to_pdf(
+  #   ors, file.path(".", sprintf(
+  #     "mostafavi_bar_chart.%s.pdf", format(Sys.Date(), "%Y%m%d"))), width = 3, height = 7)
 
   # Plot
 
@@ -343,7 +349,7 @@ main <- function(argv = NULL) {
   midpoints <- (bin_definitions[-length(bin_definitions)] + bin_definitions[-1]) / 2
 
   tss_distances <- combined_results_with_controls %>%
-    filter(!is.na(class)) %>%
+    filter(!is.na(class), class != "") %>%
     ungroup() %>%
     mutate(distance_bin = as.character(cut(d_tss, breaks = bin_definitions, include.lowest = T, right = F, labels=midpoints))) %>%
     group_by(class, class_nested, control) %>%

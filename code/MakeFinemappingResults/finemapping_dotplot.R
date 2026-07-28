@@ -276,7 +276,7 @@ PlotDotPlot <- function(InputAssoc, genesWindow, pvaluecol, zscorecol = NULL, sn
         n_variants_capped = pmin(500, n_variants),
         capped = n_variants!=n_variants_capped,
         label = sprintf("%s (%s)", ifelse(is.na(gene_name), gene_id, gene_name), n_variants)) %>%
-        ungroup()
+      ungroup()
 
     p1 <- ggplot(LocuswiseSummary, aes(y = n_variants_capped, x = abs_SNPChrPos,
                                        colour = SnpChr)) +
@@ -396,18 +396,18 @@ main <- function(argv = NULL) {
   fwrite(lead_snps2, "../../lead_variants.txt.gz", sep="\t", col.names=T, row.names=F)
 
   significant_lead_snps <- deframe(lead_snps2 %>%
-    summarise(
-      n_genes_assessed = sum(available_genes %in% gene_reference$gene_id),
-      n_egenes = n_distinct(phenotype),
-      n_eqtls = n(),
-      n_eqtls_cis = sum(type=="cis"),
-      n_eqtls_trans = sum(type=="trans"),
-      n_egenes_cis = n_distinct(phenotype[type=="cis"]),
-      n_egenes_trans = n_distinct(phenotype[type=="trans"]),
-      n_variants = n_distinct(variant),
-      p_egenes = n_egenes/n_genes_assessed*100,
-      p_egenes_cis = n_egenes_cis/n_genes_assessed*100,
-      p_egenes_trans = n_egenes_trans/n_genes_assessed*100) %>% pivot_longer(everything()))
+                                     summarise(
+                                       n_genes_assessed = sum(available_genes %in% gene_reference$gene_id),
+                                       n_egenes = n_distinct(phenotype),
+                                       n_eqtls = n(),
+                                       n_eqtls_cis = sum(type=="cis"),
+                                       n_eqtls_trans = sum(type=="trans"),
+                                       n_egenes_cis = n_distinct(phenotype[type=="cis"]),
+                                       n_egenes_trans = n_distinct(phenotype[type=="trans"]),
+                                       n_variants = n_distinct(variant),
+                                       p_egenes = n_egenes/n_genes_assessed*100,
+                                       p_egenes_cis = n_egenes_cis/n_genes_assessed*100,
+                                       p_egenes_trans = n_egenes_trans/n_genes_assessed*100) %>% pivot_longer(everything()))
 
   outcome_variables[["signficant_eqtls_per_2Mb"]] <- significant_lead_snps
 
@@ -432,10 +432,10 @@ main <- function(argv = NULL) {
            absBeta = abs(beta),
            p_value = 2*pnorm(absZ, lower.tail=F),
            variant_class = case_when(
-               str_detect(variant, "HGSV") ~ "SV",
-               str_length(eff_allele) > str_length(non_eff_allele) ~ "Insertion",
-               str_length(eff_allele) < str_length(non_eff_allele) ~ "Deletion",
-               str_length(eff_allele) == str_length(non_eff_allele) ~ "SNP"))
+             str_detect(variant, "HGSV") ~ "SV",
+             str_length(eff_allele) > str_length(non_eff_allele) ~ "Insertion",
+             str_length(eff_allele) < str_length(non_eff_allele) ~ "Deletion",
+             str_length(eff_allele) == str_length(non_eff_allele) ~ "SNP"))
 
   build <- "hg38"
 

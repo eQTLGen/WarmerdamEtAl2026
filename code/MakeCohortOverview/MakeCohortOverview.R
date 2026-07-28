@@ -30,6 +30,7 @@ library(ggrepel)
 library(extrafont)
 library(readxl)
 library(giscoR)
+library(patchwork)
 
 
 # Declare constants
@@ -139,23 +140,41 @@ main <- function(argv=NULL) {
          world, width=80, height=80,units="mm")
 
   mds <- ggplot(data = combined,
-                aes(x = -MDS1, y = -MDS2, fill=ancestry)) +
+                aes(x = MDS1, y = MDS2, fill=ancestry)) +
     geom_point(aes(size = dataset_n, fill=ancestry),
                shape = 21, colour="white", linewidth=(0.25 / (ggplot2::.pt * 72.27/96))) +
+    geom_text_repel(aes(label=cohort), size=6/.pt, max.overlaps = 50, min.segment.length = 0) +
     scale_fill_manual(values=pop_colors) +
     scale_x_continuous(expand = c(0.2,0.2)) +
     scale_y_continuous(expand = c(0.2,0.2)) +
     scale_size_continuous(breaks = c(2000, 4000, 6000), limits = c(0, 8000), range = c(0, 8), name="Sample size") +
     guides(size="none",
            fill="none") +
-    coord_equal() +
-    theme(axis.ticks = element_blank(), axis.text = element_blank())
-
+    theme(panel.grid.major = element_line(color="grey90")) +
+    coord_equal()
   mds
+
+  barchart_sup <- combined %>% group_by(ancestry) %>%
+    summarise(dataset_n = sum(dataset_n)) %>%
+    arrange(dataset_n) %>%
+    mutate(ancestry = ordered(ancestry, levels=ancestry)) %>%
+    ggplot(aes(y=ancestry,x =dataset_n, fill=ancestry)) +
+    geom_col() +
+    xlab("Sample size") +
+    scale_fill_manual(values=pop_colors) +
+    theme(panel.grid.major.x = element_line(color="grey90"),
+          panel.grid.minor.x = element_line(color="grey90"),
+          legend.position = "none")
+
+  barchart_sup
+
+  mds_barchart_fig3 <- mds + barchart_sup + plot_layout(ncol=2)
+
+  ggsave("Supplemental_Figure3.pdf", mds_barchart_fig3, width=180, height=100, units="mm")
 
   ggsave(file.path(".", sprintf(
     "out.mds.%s.pdf", format(Sys.Date(), "%Y%m%d"))),
-         mds, width=42, height=42,units="mm")
+         mds, width=80, height=80,units="mm")
 
   combined_ordered <- combined %>%
     mutate(ancestry_major = str_split_i(ancestry, " \\(", 1),
@@ -170,7 +189,7 @@ main <- function(argv=NULL) {
     arrange(N_ancestry) %>% mutate(ancestry_major = ordered(ancestry_major, levels=rev(unique(ancestry_major))))
 
   n_cohorts <- ggplot(data = combined_ordered,
-                aes(y = ancestry_minor, x=1, label=sprintf("N = %s, datasets = %s", N, N_cohorts), fill=ancestry)) +
+                      aes(y = ancestry_minor, x=1, label=sprintf("N = %s, datasets = %s", N, N_cohorts), fill=ancestry)) +
     geom_text(colour="black") +
     scale_fill_manual(values=pop_colors) +
     guides(size= guide_legend(position = "bottom"),
